@@ -62,12 +62,12 @@ void go(char * args, int len)
 
 ### Packing Arguments in CNA
 
-Packing in CNA only losely applies to Sliver extension manifest. For porting BOF originally written for CS, the following info is relevent. 
+Packing in CNA only loosely applies to Sliver extension manifest. For porting BOF originally written for CS, the following info is relevent. 
 
 - Separated by whitespace
 - `$1` is current beacon
-- `$2`, `$3`, `$4`, ... is input
 - `z` is data format (see Data Formats Table below)
+- `$2`, `$3`, `$4`, ... is input
 
 Packing a single arg in CNA would look like:
 
