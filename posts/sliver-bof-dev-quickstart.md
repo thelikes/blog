@@ -95,7 +95,7 @@ Provided by CobaltStrike documentation
 | Z | zero-terminated wide string | (wchar_t *)BeaconDataExtract |
 
 ## Sliver
-Most existing BOFs designed for CS can be ported. Review the Sliver wiki for details.
+Most existing BOFs designed for CS can be ported. Review the Sliver [wiki](https://github.com/BishopFox/sliver/wiki/BOF-&-COFF-Support) for details.
 
 ### Extensions
 
